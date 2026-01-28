@@ -2847,22 +2847,60 @@ impl<'a, 'bump, T> DoubleEndedIterator for Drain<'a, 'bump, T> {
 
 impl<'a, 'bump, T> Drop for Drain<'a, 'bump, T> {
     fn drop(&mut self) {
-        // exhaust self first
-        self.for_each(drop);
+        /// Moves back the un-`Drain`ed elements to restore the original `Vec`.
+        struct DropGuard<'r, 'a, 'bump, T>(&'r mut Drain<'a, 'bump, T>);
 
-        if self.tail_len > 0 {
-            unsafe {
-                let source_vec = self.vec.as_mut();
-                // memmove back untouched tail, update to new length
-                let start = source_vec.len();
-                let tail = self.tail_start;
-                if tail != start {
-                    let src = source_vec.as_ptr().add(tail);
-                    let dst = source_vec.as_mut_ptr().add(start);
-                    ptr::copy(src, dst, self.tail_len);
+        impl<'r, 'a, 'bump, T> Drop for DropGuard<'r, 'a, 'bump, T> {
+            fn drop(&mut self) {
+                if self.0.tail_len > 0 {
+                    unsafe {
+                        let source_vec = self.0.vec.as_mut();
+                        // memmove back untouched tail, update to new length
+                        let start = source_vec.len();
+                        let tail = self.0.tail_start;
+                        if tail != start {
+                            let src = source_vec.as_ptr().add(tail);
+                            let dst = source_vec.as_mut_ptr().add(start);
+                            ptr::copy(src, dst, self.0.tail_len);
+                        }
+                        source_vec.set_len(start + self.0.tail_len);
+                    }
                 }
-                source_vec.set_len(start + self.tail_len);
             }
+        }
+
+        let iter = mem::replace(&mut self.iter, [].iter());
+        let drop_len = iter.len();
+
+        let mut vec = self.vec;
+
+        if mem::size_of::<T>() == 0 {
+            // ZSTs have no identity, so we don't need to move them around, we only need to drop the correct amount.
+            // this can be achieved by manipulating the Vec length instead of moving values out from `iter`.
+            unsafe {
+                let vec = vec.as_mut();
+                let old_len = vec.len();
+                vec.set_len(old_len + drop_len + self.tail_len);
+                vec.truncate(old_len + self.tail_len);
+            }
+
+            return;
+        }
+
+        // ensure elements are moved back into their appropriate places, even when drop_in_place panics
+        let _guard = DropGuard(self);
+
+        if drop_len == 0 {
+            return;
+        }
+
+        let drop_ptr = iter.as_slice().as_ptr();
+
+        unsafe {
+            let vec_ptr = vec.as_mut().as_mut_ptr();
+            let drop_offset = drop_ptr.offset_from(vec_ptr) as usize;
+            let to_drop = ptr::slice_from_raw_parts_mut(vec_ptr.add(drop_offset), drop_len);
+            ptr::drop_in_place(to_drop);
         }
     }
 }

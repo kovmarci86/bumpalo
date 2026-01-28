@@ -298,3 +298,47 @@ fn test_from_iter_in() {
     let v = Vec::from_iter_in(iter, &b);
     assert_eq!(v, [0, 2, 4, 6, 8]);
 }
+
+#[test]
+fn test_drain_panic() {
+    let panics = Cell::new(false);
+    let dropped = Cell::new(0);
+    enum Item<'a> {
+        Foo(&'a Cell<usize>),
+        PanicDrop(&'a Cell<bool>),
+    }
+    impl<'a> Drop for Item<'a> {
+        fn drop(&mut self) {
+            match self {
+                Item::Foo(c) => c.set(c.get() + 1),
+                Item::PanicDrop(c) => {
+                    if c.get() {
+                        panic!("panic in drop");
+                    }
+                }
+            }
+        }
+    }
+
+    let b = Bump::new();
+    let mut v = Vec::new_in(&b);
+    v.push(Item::Foo(&dropped));
+    v.push(Item::PanicDrop(&panics));
+    v.push(Item::Foo(&dropped));
+
+    {
+        let mut v_ref = std::panic::AssertUnwindSafe(&mut v);
+        let panics_ref = std::panic::AssertUnwindSafe(&panics);
+        let res = std::panic::catch_unwind(move || {
+            let mut drain = v_ref.drain(0..2);
+            drain.next(); // yield Foo
+            panics_ref.set(true);
+            // drain is dropped here, will try to drop PanicDrop and panic
+        });
+        assert!(res.is_err());
+    }
+    // After panic, the remaining elements should be moved back.
+    assert_eq!(v.len(), 1);
+    assert_eq!(dropped.get(), 1); // Only the first Foo was dropped (by Drain)
+    panics.set(false);
+}
