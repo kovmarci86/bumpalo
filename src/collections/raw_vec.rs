@@ -358,10 +358,22 @@ impl<'a, T> RawVec<'a, T> {
         let required_cap = used_cap
             .checked_add(needed_extra_cap)
             .ok_or(CapacityOverflow)?;
+
+        // Tiny Vecs are dumb. Skip to:
+        // - 8 if the element size is 1, because any heap allocator is likely
+        //   to round up a request of less than 8 bytes to at least 8 bytes.
+        // - 4 if elements are moderate-sized (<= 1 KiB).
+        // - 1 otherwise, to avoid wasting too much space for very short Vecs.
+        let min_cap = match mem::size_of::<T>() {
+            1 => 8,
+            n if n <= 1024 => 4,
+            _ => 1,
+        };
+
         // Cannot overflow, because `cap <= isize::MAX`, and type of `cap` is `usize`.
         let double_cap = self.cap * 2;
         // `double_cap` guarantees exponential growth.
-        Ok(cmp::max(double_cap, required_cap))
+        Ok(cmp::max(cmp::max(double_cap, required_cap), min_cap))
     }
 
     /// The same as `reserve`, but returns on errors instead of panicking or aborting.

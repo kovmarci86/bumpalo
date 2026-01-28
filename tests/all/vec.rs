@@ -342,3 +342,23 @@ fn test_drain_panic() {
     assert_eq!(dropped.get(), 1); // Only the first Foo was dropped (by Drain)
     panics.set(false);
 }
+
+#[test]
+fn test_vec_initial_growth() {
+    let b = Bump::new();
+    let mut v: Vec<u8> = Vec::new_in(&b);
+    v.push(1);
+    // For u8, initial capacity should be 8
+    assert_eq!(v.capacity(), 8);
+
+    let mut v: Vec<u32> = Vec::new_in(&b);
+    v.push(1);
+    // For u32 (size 4), initial capacity should be 4
+    assert_eq!(v.capacity(), 4);
+
+    struct Large([u8; 2048]);
+    let mut v: Vec<Large> = Vec::new_in(&b);
+    v.push(Large([0; 2048]));
+    // For Large (size > 1024), initial capacity should be 1
+    assert_eq!(v.capacity(), 1);
+}
