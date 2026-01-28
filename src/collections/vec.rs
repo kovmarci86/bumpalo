@@ -602,7 +602,19 @@ impl<'bump, T: 'bump> Vec<'bump, T> {
     /// assert_eq!(v, [7, 7, 7]);
     /// ```
     pub fn from_iter_in<I: IntoIterator<Item = T>>(iter: I, bump: &'bump Bump) -> Vec<'bump, T> {
-        let mut v = Vec::new_in(bump);
+        let mut iter = iter.into_iter();
+        let mut v = match iter.next() {
+            None => return Vec::new_in(bump),
+            Some(element) => {
+                let (lower, _) = iter.size_hint();
+                let mut v = Vec::with_capacity_in(lower.saturating_add(1), bump);
+                unsafe {
+                    ptr::write(v.as_mut_ptr(), element);
+                    v.set_len(1);
+                }
+                v
+            }
+        };
         v.extend(iter);
         v
     }

@@ -290,3 +290,11 @@ fn test_extend_iter() {
     v.extend(iter);
     assert_eq!(v, [0, 2, 4]);
 }
+
+#[test]
+fn test_from_iter_in() {
+    let b = Bump::new();
+    let iter = (0..5).map(|x| x * 2);
+    let v = Vec::from_iter_in(iter, &b);
+    assert_eq!(v, [0, 2, 4, 6, 8]);
+}
