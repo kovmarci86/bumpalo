@@ -230,3 +230,54 @@ fn test_truncate_panic() {
     assert_eq!(v.len(), 1);
     panics.set(false);
 }
+
+#[test]
+fn test_retain() {
+    let b = Bump::new();
+    let mut v = vec![in &b; 1, 2, 3, 4];
+    v.retain(|&x| x % 2 == 0);
+    assert_eq!(v, [2, 4]);
+}
+
+#[test]
+fn test_retain_mut() {
+    let b = Bump::new();
+    let mut v = vec![in &b; 1, 2, 3, 4];
+    v.retain_mut(|x| {
+        *x *= 2;
+        *x % 4 == 0
+    });
+    assert_eq!(v, [4, 8]);
+}
+
+#[test]
+fn test_retain_panic() {
+    let panics = Cell::new(false);
+    struct PanicDrop<'a>(&'a Cell<bool>);
+    impl<'a> Drop for PanicDrop<'a> {
+        fn drop(&mut self) {
+            if self.0.get() {
+                panic!("panic in drop");
+            }
+        }
+    }
+
+    let b = Bump::new();
+    let mut v = Vec::new_in(&b);
+    v.push(PanicDrop(&panics));
+    v.push(PanicDrop(&panics));
+    v.push(PanicDrop(&panics));
+
+    {
+        let mut v_ref = std::panic::AssertUnwindSafe(&mut v);
+        let res = std::panic::catch_unwind(move || {
+            v_ref.retain(|_| {
+                panic!("panic in predicate");
+            });
+        });
+        assert!(res.is_err());
+    }
+    // After panic, the elements that weren't processed should still be there.
+    // In this case, the panic happens on the first element, so all 3 elements remain.
+    assert_eq!(v.len(), 3);
+}

@@ -1296,7 +1296,7 @@ impl<'bump, T: 'bump> Vec<'bump, T> {
     where
         F: FnMut(&T) -> bool,
     {
-        self.drain_filter(|x| !f(x));
+        self.retain_mut(|elem| f(elem));
     }
 
     /// Retains only the elements specified by the predicate.
@@ -1320,7 +1320,84 @@ impl<'bump, T: 'bump> Vec<'bump, T> {
     where
         F: FnMut(&mut T) -> bool,
     {
-        self.drain_filter(|x| !f(x));
+        let original_len = self.len();
+        // Vec: [Kept, Kept, Hole, Hole, Hole, Hole, Unchecked, Unchecked]
+        //      |            ^- write                ^- read             |
+        //      |<-              original_len                          ->|
+        // Kept: Elements which predicate returns true on.
+        // Hole: Moved or dropped element slot.
+        // Unchecked: Unchecked valid elements.
+        //
+        // This drop guard will be invoked when predicate or `drop` of element panicked.
+        // It shifts unchecked elements to cover holes and `set_len` to the correct length.
+        // In cases when predicate and `drop` never panick, it will be optimized out.
+        struct PanicGuard<'a, 'bump, T: 'bump> {
+            v: &'a mut Vec<'bump, T>,
+            read: usize,
+            write: usize,
+            original_len: usize,
+        }
+
+        impl<'a, 'bump, T: 'bump> Drop for PanicGuard<'a, 'bump, T> {
+            fn drop(&mut self) {
+                let remaining = self.original_len - self.read;
+                if remaining > 0 && self.read != self.write {
+                    unsafe {
+                        ptr::copy(
+                            self.v.as_ptr().add(self.read),
+                            self.v.as_mut_ptr().add(self.write),
+                            remaining,
+                        );
+                    }
+                }
+                unsafe {
+                    self.v.set_len(self.write + remaining);
+                }
+            }
+        }
+
+        let mut read = 0;
+        while read < original_len {
+            if !f(&mut self[read]) {
+                break;
+            }
+            read += 1;
+        }
+
+        if read == original_len {
+            return;
+        }
+
+        let mut g = PanicGuard {
+            v: self,
+            read: read + 1,
+            write: read,
+            original_len,
+        };
+
+        let ptr = g.v.as_mut_ptr();
+        unsafe {
+            ptr::drop_in_place(ptr.add(read));
+        }
+
+        while g.read < g.original_len {
+            let cur = unsafe { &mut *ptr.add(g.read) };
+            if !f(cur) {
+                g.read += 1;
+                unsafe {
+                    ptr::drop_in_place(cur);
+                }
+            } else {
+                let hole = unsafe { ptr.add(g.write) };
+                unsafe {
+                    ptr::copy_nonoverlapping(cur, hole, 1);
+                }
+                g.write += 1;
+                g.read += 1;
+            }
+        }
+
+        drop(g);
     }
 
     /// Creates an iterator that removes the elements in the vector
