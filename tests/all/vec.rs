@@ -281,3 +281,12 @@ fn test_retain_panic() {
     // In this case, the panic happens on the first element, so all 3 elements remain.
     assert_eq!(v.len(), 3);
 }
+
+#[test]
+fn test_extend_iter() {
+    let b = Bump::new();
+    let mut v = Vec::new_in(&b);
+    let iter = (0..5).filter(|x| x % 2 == 0);
+    v.extend(iter);
+    assert_eq!(v, [0, 2, 4]);
+}

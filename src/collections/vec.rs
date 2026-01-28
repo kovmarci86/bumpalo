@@ -2426,11 +2426,17 @@ impl<'a, 'bump, T> IntoIterator for &'a mut Vec<'bump, T> {
 impl<'bump, T: 'bump> Extend<T> for Vec<'bump, T> {
     #[inline]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        let iter = iter.into_iter();
-        self.reserve(iter.size_hint().0);
-
-        for t in iter {
-            self.push(t);
+        let mut iter = iter.into_iter();
+        while let Some(element) = iter.next() {
+            let len = self.len();
+            if len == self.capacity() {
+                let (lower, _) = iter.size_hint();
+                self.reserve(lower.saturating_add(1));
+            }
+            unsafe {
+                ptr::write(self.as_mut_ptr().add(len), element);
+                self.set_len(len + 1);
+            }
         }
     }
 }
