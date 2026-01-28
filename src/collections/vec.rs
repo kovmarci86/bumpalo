@@ -942,20 +942,14 @@ impl<'bump, T: 'bump> Vec<'bump, T> {
     /// [`drain`]: #method.drain
     pub fn truncate(&mut self, len: usize) {
         let current_len = self.len;
+        if len >= current_len {
+            return;
+        }
         unsafe {
-            let mut ptr = self.as_mut_ptr().add(self.len);
-            // Set the final length at the end, keeping in mind that
-            // dropping an element might panic. Works around a missed
-            // optimization, as seen in the following issue:
-            // https://github.com/rust-lang/rust/issues/51802
-            let mut local_len = SetLenOnDrop::new(&mut self.len);
-
-            // drop any extra elements
-            for _ in len..current_len {
-                local_len.decrement_len(1);
-                ptr = ptr.offset(-1);
-                ptr::drop_in_place(ptr);
-            }
+            let remaining_len = current_len - len;
+            let s = ptr::slice_from_raw_parts_mut(self.as_mut_ptr().add(len), remaining_len);
+            self.len = len;
+            ptr::drop_in_place(s);
         }
     }
 
@@ -2183,11 +2177,6 @@ impl<'a> SetLenOnDrop<'a> {
     #[inline]
     fn increment_len(&mut self, increment: usize) {
         self.local_len += increment;
-    }
-
-    #[inline]
-    fn decrement_len(&mut self, decrement: usize) {
-        self.local_len -= decrement;
     }
 }
 

@@ -167,3 +167,66 @@ fn test_vec_write() {
 
     assert_eq!(v, &[1, 2, 3]);
 }
+
+#[test]
+fn test_truncate() {
+    let b = Bump::new();
+    let mut v = vec![in &b; 1, 2, 3, 4, 5];
+    v.truncate(3);
+    assert_eq!(v, [1, 2, 3]);
+    v.truncate(0);
+    assert_eq!(v, []);
+}
+
+#[test]
+fn test_truncate_drop() {
+    let dropped = Cell::new(0);
+    struct Foo<'a>(&'a Cell<usize>);
+    impl<'a> Drop for Foo<'a> {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    let b = Bump::new();
+    let mut v = Vec::new_in(&b);
+    v.push(Foo(&dropped));
+    v.push(Foo(&dropped));
+    v.push(Foo(&dropped));
+
+    v.truncate(1);
+    assert_eq!(dropped.get(), 2);
+    assert_eq!(v.len(), 1);
+
+    v.truncate(0);
+    assert_eq!(dropped.get(), 3);
+    assert_eq!(v.len(), 0);
+}
+
+#[test]
+fn test_truncate_panic() {
+    let panics = Cell::new(true);
+    struct PanicDrop<'a>(&'a Cell<bool>);
+    impl<'a> Drop for PanicDrop<'a> {
+        fn drop(&mut self) {
+            if self.0.get() {
+                panic!("panic in drop");
+            }
+        }
+    }
+
+    let b = Bump::new();
+    let mut v = Vec::new_in(&b);
+    v.push(PanicDrop(&panics));
+    v.push(PanicDrop(&panics));
+
+    {
+        let mut v_ref = std::panic::AssertUnwindSafe(&mut v);
+        let res = std::panic::catch_unwind(move || {
+            v_ref.truncate(1);
+        });
+        assert!(res.is_err());
+    }
+    assert_eq!(v.len(), 1);
+    panics.set(false);
+}
